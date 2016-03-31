@@ -1,0 +1,545 @@
+#!/bin/bash
+
+####################################################
+# rev 2016-02-7 18:53
+# Added bin+cue parsing
+# rev 2016-03-1 21:51
+# Added .Trash and LOST.DIR
+# Some on screen information changed
+# Added information at startup
+#
+# Changed to Github hosted by John Snowdon (john.snowdon@ncl.ac.uk)
+# http://github.com/megatron-uk/RheaMenu-Linux
+#
+# Amongst other things.....
+# - Added tests for mkisofs & xxd
+# - Added loop for CDI images
+# - Added SD directory as parameter 1
+#
+##################################################
+
+VERBOSE=0
+MENU_BUILD=0
+ISO_WRITE=0
+IGNORE_BAD=0
+
+##################################################
+# Data Extraction Functions
+##################################################
+
+# Notes
+# -----
+# All functions take a single argument which is the
+# name of the file.
+#
+# CDI images can have the Saturn header information
+# at a number of locations. The two I've found are:
+# 0x56230 == 352816 bytes offset: proper, ripped full disc
+# images created in DiscJuggler, including subcodes etc.
+#
+# 0x53008 == 339976 offset; converted bin/cue images that
+# don't include subcode data, nor full disc headers.
+
+CDI_BASE_1=352816
+CDI_BASE_2=339976
+
+check_cdi() {
+	# Check the type of CDI file and the offset at which
+	# the disc data is stored.
+	if [ "`xxd -s $CDI_BASE_1 -l 15 -ps "$1" | xxd -r -p`" == "SEGA SEGASATURN" ]
+	then
+		# Type 1 CDI base offset
+		#echo "Type 1 CDI base address"
+		CDI_BASE=$CDI_BASE_1
+		CDI_TYPE=1
+	elif [ "`xxd -s $CDI_BASE_2 -l 15 -ps "$1" | xxd -r -p`" == "SEGA SEGASATURN" ]
+	then
+		# Type 2 CDI offset
+		#echo "Type 2 CDI base address"
+		CDI_BASE=$CDI_BASE_2
+		CDI_TYPE=2
+	else
+		# Not a recognised CDI file
+		echo ""
+		echo "Warning: $1 is not a recognised CDI file!" >&2
+		echo "Warning: We won't be able to extract any disc details for this image!\n" >&2
+		echo ""
+		CDI_TYPE=0
+	fi
+}
+
+title_cdi() {
+	if [ "$CDI_TYPE" == 1 ]
+	then
+		BASE=$(($CDI_BASE + 96))
+	else
+		BASE=$(($CDI_BASE + 32))
+	fi	
+	t=`xxd -s $BASE -l 55 -ps "$1" | xxd -r -p | sed -e "s/\( \)*/\1/g"`
+	# Type 2 CDI files always have a single disc name
+	# and it is never space seperated.
+	if [ "$CDI_TYPE" == 1 ]
+	then
+		echo $t
+	else
+		echo $t | awk '{print $1}'
+	fi
+}
+
+title_ccd() {
+	echo `xxd -s 112 -l 55 -ps "$1" | xxd -r -p | sed -e "s/\( \)*/\1/g"`
+}
+
+title_bincue() {
+	echo `xxd -s 112 -l 55 -ps "$1" | xxd -r -p | sed -e "s/\( \)*/\1/g"`
+}
+
+disc_cdi() {
+	if [ "$CDI_TYPE" == 1 ]
+	then
+		BASE=$(($CDI_BASE + 59))
+	else
+		BASE=$(($CDI_BASE - 5))
+	fi	
+	echo `xxd -s $BASE -l 3 -ps "$1" | xxd -r -p | sed -e "s/\( \)*/\1/g"`
+}
+
+disc_ccd() {
+	echo `xxd -s 75 -l 3 -ps "$1" | xxd -r -p | sed -e "s/\( \)*/\1/g"`
+}
+
+disc_bincue() {
+	echo `xxd -s 75 -l 3 -ps "$1" | xxd -r -p | sed -e "s/\( \)*/\1/g"`
+}
+
+region_cdi() {
+	if [ "$CDI_TYPE" == 1 ]
+	then
+		BASE=$(($CDI_BASE + 64))
+		r=`xxd -s $BASE -l 10 -ps "$1" | xxd -r -p | sed -e "s/\( \)*/\1/g"`
+		echo $r
+	else
+		# Type 2 CDI files dont have region information
+		echo ""
+	fi	
+}
+
+version_cdi() {
+	if [ "$CDI_TYPE" == 1 ]
+	then
+		BASE=$(($CDI_BASE + 42))
+		v=`xxd -s $BASE -l 6 -ps "$1" | xxd -r -p | sed -e "s/\( \)*/\1/g"`	
+		echo $v
+	else
+		# Type 2 CDI doesn't have a version
+		echo ""
+	fi	
+	
+}
+
+date_cdi() {
+	if [ "$CDI_TYPE" == 1 ]
+	then
+		BASE=$(($CDI_BASE + 48))
+		v=`xxd -s $BASE -l 8 -ps "$1" | xxd -r -p | sed -e "s/\( \)*/\1/g"`	
+		echo $v
+	else
+		# Type 2 CDI doesnt have a date
+		echo ""
+	fi	
+	
+}
+
+################################################
+# First function to run - check everything is ok
+################################################
+init() {
+	##################################################
+	# Pass SD directory as parameter 1
+	##################################################
+	
+	if [ "$SD_DIR" == "" ]
+	then
+		SD_DIR="YOU_MUST_PASS_THE_SDCARD_DIRECTORY"
+	fi
+	
+	##################################################
+	# Simple banner
+	##################################################
+	
+	clear
+	echo "RMenu Utility for Unix/Linux"
+	echo "----------------------------"
+	echo "This tool generates the menu configuration data for the"
+	echo "SEGA Saturn SD card loader 'Rhea', using the RMenu"
+	echo "Saturn ISO image."
+	echo ""
+	echo "Original Information"
+	echo "--------------------"
+	echo "Thanks to neuroacid, Google.com, AskUbuntu.com, stackoverflow.com"
+	echo "This scripts needs the full RMENU archive unpacking in the 01 folder"
+	echo "of your SD card."
+	echo ""
+	echo "Supported Images"
+	echo "----------------"
+	echo "CDI:     DiscJuggler"
+	echo "CCD:     CloneCD"
+	echo "BIN/CUE: Raw image"
+	echo ""
+	
+	############################################
+	# Check that we are good to go
+	############################################
+	
+	echo "Checking Requirements"
+	echo "---------------------"
+
+	# Check for grep
+        which grep >/dev/null
+        if [ "$?" != "0" ]
+        then
+                echo "Sorry, cannot find 'grep' binary"
+                echo ""
+                echo "You need to install grep! Are you running something other than Unix?"
+                exit -1
+        else
+                echo "Found: `which grep`"
+        fi
+
+	# Check for sed 
+        which sed >/dev/null
+        if [ "$?" != "0" ]
+        then
+                echo "Sorry, cannot find 'sed' binary"
+                echo ""
+                echo "You need to install sed! Are you running something other than Unix?"
+                exit -1
+        else
+                echo "Found: `which sed`"
+        fi
+
+	# Check for awk 
+        which awk >/dev/null
+        if [ "$?" != "0" ]
+        then
+                echo "Sorry, cannot find 'awk' binary"
+                echo ""
+                echo "You need to install awk! Are you running something other than Unix?"
+                exit -1
+        else
+                echo "Found: `which awk`"
+        fi
+	
+	# Check that mkisofs can be found
+	which mkisofs >/dev/null
+	if [ "$?" != "0" ]
+	then
+		echo "Sorry, cannot find 'mkisofs' binary"
+		echo ""
+		echo "You need to install the mkisofs tool using your systems package manager."
+		exit -1
+	else
+		echo "Found: `which mkisofs`"
+	fi
+	
+	# Check for xxd hex tool
+	which xxd >/dev/null
+	if [ "$?" != "0" ]
+	then
+		echo "Sorry, cannot find 'xxd' binary"
+		echo ""
+		echo "You need to install the xxd tool using your systems package manager."
+		exit -1
+	else
+		echo "Found: `which xxd`"
+	fi
+	
+	# Check the SD card folder exists
+	# and has RMENU installed
+	if [ -d "$SD_DIR" ]
+	then
+		echo "SD Card: $SD_DIR"
+		if [ -d "$SD_DIR/01/BIN/RMENU" ]
+		then
+			echo "RMENU: $SD_DIR/01/BIN/RMENU found"
+		else
+			echo "Sorry, cannot find RMENU installation at $SD_DIR/01/BIN/RMENU"
+			echo ""
+			exit -1
+		fi
+	else
+		echo "SD Card: $SD_DIR not found"
+		echo ""
+		echo "Did you pass the mount point of your SD card?"
+		exit -1
+	fi
+
+	echo "Verbose: $VERBOSE"
+	echo "Build MENU.LIST: $MENU_BUILD"
+	echo "Write RMENU.ISO: $ISO_WRITE"
+	
+	echo ""
+	echo "Press enter to continue, otherwise Control-C to exit"
+	read c
+}
+
+
+#################################################
+# Main code runs here
+#################################################	
+mklist() {
+	#Loop for entering/exiting recursive directories
+	cd $SD_DIR
+	CDIR=$SD_DIR
+	if [ "$MENU_BUILD" == 1 ]
+	then
+		echo "Deleting previous menu list ($CDIR/01/BIN/RMENU/LIST.INI)"
+		rm $CDIR/01/BIN/RMENU/LIST.INI	# Deleting old list.ini
+	
+		# Starting with LIST.INI creation
+		# setting the first line of LIST.INI (RMENU)
+		echo "Creating RMENU entry ($CDIR/01/BIN/RMENU/LIST.INI)"
+		T=01.title=RMENU
+		DI=01.disc=1/1
+		R=01.region=JTUE
+		V=01.version=V0.1.3
+		DA=01.date=20151205
+		printf "$T\r\n$DI\r\n$R\r\n$V\r\n$DA\r\n" >> $CDIR/01/BIN/RMENU/LIST.INI
+	fi
+
+	# Starting the hard work
+	echo "Starting the scan"
+	for i in $(find . -maxdepth 1 -type d | sort | grep -v "\.$" | grep -v "\01")
+	do
+		BAD=0
+		DIR=${i%:}                    		# Strip ':'
+		cd $DIR
+		BASENAME=`basename $(pwd)`		#Folder number
+		if [ "$(pwd | grep -E '.Trash|LOST.DIR')" ]
+		then 
+			echo "" 
+		elif [ "$(ls -A)" ]
+		then
+			if [ "$(ls -A | grep -i \.ccd)" ]
+			then
+				f=`ls -A | grep -i \.ccd`
+				echo "$DIR: CCD image found: $f"
+				# CloneCD images
+				#Extracting values
+				TITLE=`title_ccd "$f"`
+				DISC=`disc_ccd "$f"` 
+				REGION=`xxd -s 80 -l 10 -ps *.[iI][mM][gG] | xxd -r -p | sed -e "s/\( \)*/\1/g"`
+				VERSION=`xxd -s 59 -l 5 -ps *.[iI][mM][gG] | xxd -r -p | sed -e "s/\( \)*/\1/g"`
+				DATE=`xxd -s 64 -l 8 -ps *.[iI][mM][gG] | xxd -r -p`
+				#Feeding vars
+				T=$BASENAME.title="(CCD)".$TITLE
+				DI=$BASENAME.disc=$DISC
+				R=$BASENAME.region=$REGION
+				V=$BASENAME.version=$VERSION
+				DA=$BASENAME.date=$DATE
+				#Printing game directory info
+				if [ "$MENU_BUILD" == 1 ]
+				then
+					printf "$T\r\n$DI\r\n$R\r\n$V\r\n$DA\r\n" >> $CDIR/01/BIN/RMENU/LIST.INI
+				fi
+				if [ "$VERBOSE" == 1 ]
+				then
+					echo "	Title: 		$TITLE"
+					echo "	Disc : 		$DISC"
+					echo "	Region:		$REGION"
+					echo "	Version:	$VERSION"
+					echo "	Date:		$DATE"
+					echo ""
+				fi
+			elif [ "$(ls -A | grep -i \.cdi)" ]
+			then
+				f=`ls -A | grep -i \.cdi`
+				echo "$DIR: CDI image found: $f"
+				check_cdi "$f"
+				# DiscJuggler images can have a few offsets, so this
+				# is a bit more complex than other image formats....
+				TITLE=`title_cdi "$f"`
+				DISC=`disc_cdi "$f"`
+				REGION=`region_cdi "$f"`
+				VERSION=`version_cdi "$f"`
+				DATE=`date_cdi "$f"`
+				#Feeding vars
+				T=$BASENAME.title="(CDI)".$TITLE
+				DI=$BASENAME.disc=$DISC
+				R=$BASENAME.region=$REGION
+				V=$BASENAME.version=$VERSION
+				DA=$BASENAME.date=$DATE
+				#Printing game directory info
+				if [ "$MENU_BUILD" == 1 ]
+				then
+					printf "$T\r\n$DI\r\n$R\r\n$V\r\n$DA\r\n" >> $CDIR/01/BIN/RMENU/LIST.INI
+				fi
+				if [ "$VERBOSE" == 1 ]
+				then
+					echo "  Title:          $TITLE"
+					echo "  Disc :          $DISC"
+					echo "  Region:         $REGION"
+					echo "  Version:        $VERSION"
+					echo "  Date:           $DATE"
+					echo ""
+				fi
+			elif [ "$(ls -A | grep -i \.bin)" ]
+			then
+				f=`ls -A | grep -i \.bin`
+				echo "$DIR: BIN/CUE image found: $f"
+				#BIN/CUE images
+				#Extracting values
+				TITLE=`title_bincue "$f"`
+				DISC=`disc_bincue "$f"` 
+				REGION=`xxd -s 80 -l 10 -ps *.[bB][iI][nN] | xxd -r -p | sed -e "s/\( \)*/\1/g"`
+				VERSION=`xxd -s 59 -l 5 -ps *.[bB][iI][nN] | xxd -r -p | sed -e "s/\( \)*/\1/g"`
+				DATE=`xxd -s 64 -l 8 -ps *.[bB][iI][nN] | xxd -r -p`
+				#Feeding vars
+				T=$BASENAME.title="(BIN)."$TITLE
+				DI=$BASENAME.disc=$DISC
+				R=$BASENAME.region=$REGION
+				V=$BASENAME.version=$VERSION
+				DA=$BASENAME.date=$DATE
+				#Printing game directory info
+				if [ "$MENU_BUILD" == 1 ]
+				then
+					printf "$T\r\n$DI\r\n$R\r\n$V\r\n$DA\r\n" >> $CDIR/01/BIN/RMENU/LIST.INI
+				fi
+				if [ "$VERBOSE" == 1 ]
+				then	
+					echo "  Title:          $TITLE"
+					echo "  Disc :          $DISC"
+					echo "  Region:         $REGION"
+					echo "  Version:        $VERSION"
+					echo "  Date:           $DATE"
+					echo ""
+				fi
+			else
+				echo "$DIR: No supported images found"
+			fi
+		else	
+			#empty folders
+			T=$BASENAME.title=EMPTY\ FOLDER
+			DI=$BASENAME.disc=1/1
+			R=$BASENAME.region=
+			V=$BASENAME.version=
+			DA=$BASENAME.date=
+			if [ "$MENU_BUILD" == 1 ]
+			then
+				printf "$T\r\n$DI\r\n$R\r\n$V\r\n$DA\r\n" >> $CDIR/01/BIN/RMENU/LIST.INI
+			fi
+			#echo "$DIR: Empty"
+		fi
+		cd $CDIR
+	done
+}
+
+################################
+# Create the RMENU iso
+################################
+mkiso() {
+	echo ""
+	if [ -s "$CDIR/01/BIN/RMENU/LIST.INI" ]
+	then
+		echo "Press enter to create the new RMENU ISO, otherwise Control-C to exit"
+		read c
+		echo "Entering to 01 DIR"
+		cd $CDIR/01/BIN/RMENU
+		echo "Making the ISO"
+		mkisofs -quiet -sysid "SEGA SATURN" -V "RMENU" -volset "RMENU" -publisher "SEGA ENTERPRISES, LTD." -p "SEGA ENTREPRISES, LTD." -A "RMENU" -abstract "ABS.TXT" -copyright "CPY.TXT" -biblio "BIB.TXT" -G IP.BIN -l -input-charset iso8859-1 -o $CDIR/01/RMENU.iso $CDIR/01/BIN/RMENU/
+		ls -lh $CDIR/01/*.iso
+	else
+		echo "Sorry, no content was found, or the RMENU LIST.INI was empty."
+	fi
+}
+
+################################
+# Run all functions in order
+################################
+main() {
+	init $1
+	mklist
+	if [ "$ISO_WRITE" == 1 ]
+	then
+		mkiso
+	fi
+}
+
+###############################
+# Show help text and options
+###############################
+show_help() {
+	echo "RheaMenu-Linux"
+	echo "------------------------------"
+	echo "This script builds the menu list for the"
+	echo "SEGA Saturn Rhea SD card using the RMENU"
+	echo "application."
+	echo ""
+	echo "Your SD card should be mounted and the RMENU"
+	echo "installation unzipped in the '01' folder on"
+	echo "the SD card. All other games should be one per"
+	echo "folder, in numerically sequential folders; 02,"
+	echo "03 etc."
+	echo ""
+	echo "Note: This script will make NO modifications to"
+	echo "the SD card unless you set either the '-b' or -'w'"
+	echo "options."
+	echo "You may set the '-b' option and then manually"
+	echo "edit the generated MENU.LIST file if you wish."
+	echo "Then running the script with just the '-w' option"
+	echo "will write using the MENU.LIST. Otherwise set"
+	echo "both options for a fully automated process."
+	echo ""
+	echo "Options"
+	echo "-------"
+	echo "-b        Build a new MENU.LIST file"
+	echo "-h        Show this help text"
+	echo "-i        Ignore files we are unable to extract titles from"
+	echo "-p [path] Path to Rhea Saturn SD card"
+	echo "-v        Enable verbose mode"i
+	echo "-w        Write a new RMENU.ISO file using MENU.LIST"
+	echo ""
+	echo "Further Information"
+	echo "-------------------"
+	echo "For full information, see:"
+	echo "http://github.com/megatron-uk/RheaMenu-Linux"
+	echo ""	
+}
+
+while getopts ":vibwhp:" opt
+do
+	case $opt in
+		v)
+			# Verbose
+			VERBOSE=1
+			;;
+		i)
+			# Ignore bad files
+			IGNORE_BAD=1
+			;;
+		b)
+			# Build the MENU.LIST
+			MENU_BUILD=1
+			;;
+		w)
+			# Write the RMENU ISO
+			ISO_WRITE=1
+			;;
+		p)
+			SD_DIR="$OPTARG"
+			;;
+		h)
+			show_help
+			exit 0
+			;;
+		\?)
+			echo "Invalid option: -$OPTARG" >&2
+			exit -1
+			;;
+		:)
+			echo "Option -$OPTARG requires a value." >&2
+			exit -1
+			;;
+	esac
+done
+main
