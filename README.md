@@ -1,10 +1,10 @@
-= Readme! =
+# Readme! #
 
-This BASH shell script is used to generate the on-disc menu for the SEGA Saturn 'Rhea' SD Card reader, as designed and sold by Deunan (http://gdemu.wordpress.com).
+This BASH shell script is used to generate the on-disc menu for the SEGA Saturn 'Rhea' SD Card reader, as designed and sold by [Deunan](http://gdemu.wordpress.com).
 
-It uses the RMENU Saturn application as written by 'Neuroacid' on Assemblergames (http://assemblergames.com/l/threads/official-rhea-discussion.57377/).
+It uses the RMENU Saturn application as written by ['Neuroacid' on Assemblergames](http://assemblergames.com/l/threads/official-rhea-discussion.57377/).
 
-== Useage ==
+## Useage ##
 
 Your SD card must be formatted (FAT32), your games (either bin/cue, CloneCD .CCD or Discjuggler .CDI) must be in the numerically named folders on the SD card starting from '02' upwards. One per folder as normal.
 
@@ -14,7 +14,7 @@ The script runs, and by default makes no changes. See the help text (--h) for fu
 
 On booting the Saturn, the RMENU application should show all of the images installed on the SD card, including title, disc number etc.
 
-== Requirements ==
+## Requirements ##
 
 A mounted, formatted SD card with usual Rhea folder structure: 01, 02, 03 etc.
 
@@ -24,12 +24,12 @@ The tools 'xxd' and 'mkisofs' on the host system.
 
 Standard GNU tools including grep, awk, bash and sed. Cygwin should work fine.
 
-== Limitations ==
+## Limitations ##
 
 Discjuggler .cdi files can be in slightly different formats; if Discjuggler was used to rip the disc originally, and the full suite of reccomended options was used (subcodes, pre-gaps, cdi-g etc.) then the full Saturn disc header information should always be present (title, version, disc number, region etc). However, for games ripped initially to bin/cue and then combined to a cdi via mounting in daemon tools, some of this information may not be present.
 
 For best results, rip your original games using Discjuggler as it preserves the most information and is the most compatible with the Rhea device.
 
-== Acknowledgements ==
+## Acknowledgements ##
 
-The code is based on an initial version by AlejandroVM from assemblergames (http://assemblergames.com/l/members/alejandrovm.101308/).
+The code is based on an initial version by [AlejandroVM from assemblergames](http://assemblergames.com/l/members/alejandrovm.101308/).
