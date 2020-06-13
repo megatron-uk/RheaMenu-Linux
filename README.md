@@ -1,4 +1,12 @@
-# Readme! #
+# NOTE!!! #
+
+This project has been replaced by PyRMenuGen, a more modern and robust RMENU generator written in Python.
+
+See here https://github.com/megatron-uk/PyRMenuGen
+
+----
+
+# Old Readme Contents #
 
 This BASH shell script is used to generate the on-disc menu for the SEGA Saturn 'Rhea' SD Card reader, as designed and sold by [Deunan](http://gdemu.wordpress.com).
 
